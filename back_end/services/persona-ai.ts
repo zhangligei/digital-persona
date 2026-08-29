@@ -29,7 +29,7 @@ export type PersonaReplyRequest = {
 };
 
 export type PersonaReplyResult =
-  | { ok: true; text: string }
+  | { ok: true; text: string; degradedReason?: "not_configured" | "provider_unavailable" | "empty_response" }
   | { ok: false; reason: "not_configured" | "provider_unavailable" | "empty_response" };
 
 export type PersonaInitiativeRequest = {
@@ -76,6 +76,63 @@ function groundedIdentityFallback(personaName: string, locale: "en" | "zh"): str
   return locale === "zh" ? "我不太确定该怎么告诉你我的名字。" : "I'm not sure what name to give you.";
 }
 
+/**
+ * Keeps a conversation usable during a short model outage without inventing
+ * biography, memories, relationships, or preferences. The Wu-dialect branch
+ * is intentionally limited to greetings and neutral companionship language;
+ * it is only selected when the visitor explicitly asks for Wu dialect or uses
+ * common Wu conversational vocabulary themselves.
+ */
+function boundedServiceFallback(
+  personaName: string,
+  message: string,
+  locale: "en" | "zh",
+): string {
+  const normalizedName = personaName.trim();
+  const usableName = normalizedName && !/^(?:me|myself|i|我|本人|自己)$/i.test(normalizedName)
+    ? normalizedName
+    : "";
+  const asksIdentity = /(?:你是谁|你叫什么|侬是啥人|侬叫啥|who are you|what(?:'s| is) your name)/i.test(message);
+  if (asksIdentity) return groundedIdentityFallback(personaName, locale);
+
+  if (locale === "zh") {
+    const asksForWu = /(?:吴语|吴方言|苏州话|上海话|方言|侬|阿拉|爷叔|老早)/i.test(message);
+    if (asksForWu) {
+      const asksForGreeting = /(?:问好|问候|打招呼|介绍|侬好|你好|朋友|养老院)/i.test(message);
+      const asksForActivity = /(?:早上|早晨|晨间|活动|散步|晒太阳|爱好|喜欢做)/i.test(message);
+      const introduction = usableName ? `阿拉是${usableName}。` : "";
+      if (asksForGreeting && asksForActivity) {
+        return `各位爷叔阿姨，侬好！${introduction}早浪向散散步、晒晒日头，搭老朋友一道讲讲话，蛮适意个。`;
+      }
+      if (asksForGreeting) {
+        return `各位爷叔阿姨，侬好！${introduction}今朝能搭大家一道讲讲话，心里向蛮欢喜。`;
+      }
+      if (asksForActivity) {
+        return "早浪向散散步、晒晒日头，搭老朋友一道讲讲话，蛮适意个。";
+      }
+      return "侬讲个我听到了。勿着急，阿拉陪侬慢慢交讲一歇。";
+    }
+    return "我听到了。别着急，我们慢慢聊，我在这里陪你一会儿。";
+  }
+
+  return "I heard you. There's no rush—we can take our time and talk for a while.";
+}
+
+function degradedReply(
+  request: PersonaReplyRequest,
+  reason: "not_configured" | "provider_unavailable" | "empty_response",
+): PersonaReplyResult {
+  console.warn("[persona-ai] using bounded conversational fallback", {
+    personaId: request.personaId,
+    reason,
+  });
+  return {
+    ok: true,
+    text: boundedServiceFallback(request.personaName, request.message, request.locale),
+    degradedReason: reason,
+  };
+}
+
 function historyForPrompt(turns: PersonaConversationTurn[]): string {
   const visibleTurns = turns.slice(-12).filter((turn) => (
     turn.role !== "persona" || !hasFalseEchoIdentity(turn.content)
@@ -114,18 +171,19 @@ function noInitiativeReply(value: string): boolean {
  * supplies only relevant excerpts plus a bounded recent chat window on each
  * request, which keeps data exposure, latency, and Worker memory bounded.
  */
-export async function getPersonaReply({
+export async function getPersonaReply(request: PersonaReplyRequest): Promise<PersonaReplyResult> {
+  const {
   personaId,
   personaName,
   message,
   locale,
   recentMessages,
   voiceReferenceTranscript,
-}: PersonaReplyRequest): Promise<PersonaReplyResult> {
+  } = request;
   const apiKey = process.env.OPENAI_API_KEY;
   if (!apiKey) {
     console.error("[persona-ai] OPENAI_API_KEY is not configured");
-    return { ok: false, reason: "not_configured" };
+    return degradedReply(request, "not_configured");
   }
 
   const safeMessage = trimForContext(message, MAX_TURN_CHARS);
@@ -246,7 +304,7 @@ export async function getPersonaReply({
     }
     if (attempt === 0) await new Promise((resolve) => setTimeout(resolve, 150));
   }
-  return { ok: false, reason: emptyResponse ? "empty_response" : "provider_unavailable" };
+  return degradedReply(request, emptyResponse ? "empty_response" : "provider_unavailable");
 }
 
 /**
