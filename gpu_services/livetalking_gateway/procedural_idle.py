@@ -24,28 +24,69 @@ def _seed_for(value: str) -> int:
     return int.from_bytes(hashlib.sha256(value.encode("utf-8")).digest()[:8], "big")
 
 
+def _smoothstep(value: float) -> float:
+    bounded = max(0.0, min(1.0, value))
+    return bounded * bounded * (3.0 - 2.0 * bounded)
+
+
+def _blink_envelope(rng: random.Random, *, secondary: bool = False) -> list[float]:
+    """Return one subtly unique asymmetric close/open blink curve."""
+
+    peak = rng.uniform(0.76, 0.92) if secondary else rng.uniform(0.86, 1.0)
+    closing_frames = rng.choice((2, 2, 3))
+    opening_frames = rng.choice((3, 4, 4, 5))
+    hold_frames = 1 if rng.random() < (0.12 if secondary else 0.24) else 0
+    closing = [peak * _smoothstep((index + 1) / closing_frames) for index in range(closing_frames)]
+    hold = [peak * rng.uniform(0.965, 1.0) for _ in range(hold_frames)]
+    # Leave a small positive final sample so the last eyelid motion eases into
+    # the neutral source frame instead of snapping open on the next frame.
+    opening = [
+        peak * (1.0 - _smoothstep((index + 1) / (opening_frames + 1)))
+        for index in range(opening_frames)
+    ]
+    return closing + hold + opening
+
+
+def _blink_interval(rng: random.Random) -> float:
+    # A bounded log-normal distribution gives many ordinary intervals and a
+    # few longer pauses. Uniform spacing still looks metronomic when a loop is
+    # replayed, even if its lower and upper limits are technically random.
+    interval = math.exp(rng.gauss(math.log(3.7), 0.34))
+    if rng.random() < 0.13:
+        interval += rng.uniform(1.0, 2.4)
+    return max(2.2, min(7.8, interval))
+
+
+def _apply_blink(blink_values: list[float], start: int, envelope: Sequence[float]) -> None:
+    for offset, value in enumerate(envelope):
+        if start + offset < len(blink_values):
+            blink_values[start + offset] = max(blink_values[start + offset], value)
+
+
 def motion_samples(frame_count: int, fps: int, seed_text: str) -> list[MotionSample]:
     """Build a bounded, deterministic relaxed-motion curve.
 
     The low-frequency head drift is an Ornstein-Uhlenbeck process, so it
     wanders naturally but returns toward centre instead of walking out of the
-    crop. Breathing uses two slightly different sine periods. Blink starts
-    are sampled between three and six seconds and use a smooth five-frame
-    close/open envelope.
+    crop. Breathing uses two slightly different sine periods. Blink timing
+    follows a bounded long-tailed distribution; every blink varies its depth,
+    closing speed, opening speed and optional hold, with an occasional softer
+    double blink. The result stays deterministic for reproducible avatar
+    packages, but no longer looks like one action fired by a metronome.
     """
 
     if frame_count <= 0 or fps <= 0:
         return []
     rng = random.Random(_seed_for(seed_text))
-    blink_envelope = [0.2, 0.72, 1.0, 0.68, 0.16]
     blink_values = [0.0] * frame_count
-    next_blink = rng.uniform(3.0, 5.5)
+    next_blink = _blink_interval(rng)
     while round(next_blink * fps) < frame_count:
         start = round(next_blink * fps)
-        for offset, value in enumerate(blink_envelope):
-            if start + offset < frame_count:
-                blink_values[start + offset] = max(blink_values[start + offset], value)
-        next_blink += rng.uniform(3.0, 6.0)
+        _apply_blink(blink_values, start, _blink_envelope(rng))
+        if rng.random() < 0.12:
+            double_start = start + round(rng.uniform(0.32, 0.58) * fps)
+            _apply_blink(blink_values, double_start, _blink_envelope(rng, secondary=True))
+        next_blink += _blink_interval(rng)
 
     x = y = rotation = 0.0
     samples: list[MotionSample] = []
@@ -227,7 +268,7 @@ def generate_procedural_idle(
     output_dir: Path,
     avatar_id: str,
     *,
-    seconds: float = 6.0,
+    seconds: float = 12.0,
     fps: int = 25,
 ) -> dict:
     """Generate a subtle fallback idle loop from the baked avatar frames.
@@ -279,8 +320,8 @@ def generate_procedural_idle(
             raise OSError(f"could not write {destination}")
 
     metadata = {
-        "version": 1,
-        "generator": "bounded-ou-breath-natural-blink",
+        "version": 2,
+        "generator": "bounded-ou-breath-varied-natural-blink",
         "frames": frame_count,
         "fps": fps,
         "source_frame_index": source_index,
