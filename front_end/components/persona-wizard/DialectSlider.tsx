@@ -96,7 +96,9 @@ export function DialectSlider({
           onClick={() => snapTo(index)}
           className={`relative z-10 flex-1 py-xs text-center font-text text-caption-strong transition-colors duration-150 ${value === dialect ? "pointer-events-none text-ink" : "text-ink-muted-48"}`}
         >
-          {dialect === "mandarin"
+          {dialect === "auto"
+            ? (locale === "zh" ? "自动" : "Auto")
+            : dialect === "mandarin"
             ? (locale === "zh" ? "普通话" : "Mandarin")
             : dialect === "wu"
               ? (locale === "zh" ? "吴语" : "Wu Dialect")

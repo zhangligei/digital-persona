@@ -1,8 +1,14 @@
 from __future__ import annotations
 
 import unittest
+import importlib.util
 
-from gpu_services.livetalking_gateway.procedural_idle import motion_samples
+import numpy as np
+
+from gpu_services.livetalking_gateway.procedural_idle import (
+    _blink_frame,
+    motion_samples,
+)
 
 
 class ProceduralIdleMotionTests(unittest.TestCase):
@@ -66,6 +72,15 @@ class ProceduralIdleMotionTests(unittest.TestCase):
     def test_invalid_dimensions_return_no_samples(self) -> None:
         self.assertEqual(motion_samples(0, 25, "x"), [])
         self.assertEqual(motion_samples(10, 0, "x"), [])
+
+    @unittest.skipUnless(importlib.util.find_spec("cv2"), "OpenCV is not installed in the lightweight local test runtime")
+    def test_synthetic_target_can_drive_blink_when_scan_has_no_closed_frame(self) -> None:
+        base = np.full((40, 40, 3), 180, dtype=np.uint8)
+        target = base.copy()
+        target[10:20] = 40
+        rendered = _blink_frame(base, target, 0.75)
+        self.assertFalse(np.array_equal(rendered, base))
+        self.assertGreater(float(np.mean(base[10:20])), float(np.mean(rendered[10:20])))
 
 
 if __name__ == "__main__":

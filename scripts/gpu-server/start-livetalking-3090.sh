@@ -28,7 +28,7 @@ fi
 
 export CUDA_VISIBLE_DEVICES="${LIVETALKING_CUDA_DEVICE:-0}"
 export PATH="${echo_root}/envs/livetalking/bin:${PATH}"
-export PYTHONPATH="${service_root}:${PYTHONPATH:-}"
+export PYTHONPATH="${echo_root}/app:${service_root}:${PYTHONPATH:-}"
 
 cd "${service_root}"
 exec "${python_bin}" app.py \

@@ -90,10 +90,19 @@ def transcribe_file(path: Path, preference: str) -> dict:
 
 
 async def maybe_use_wu(request: web.Request, path: Path, preference: str, fallback: dict) -> dict:
-    if preference != "wu":
+    if preference not in {"wu", "auto"}:
+        if preference == "english":
+            fallback["spoken_variant"] = "english"
+            fallback["variant_confidence"] = fallback.get("language_probability")
+        else:
+            fallback["spoken_variant"] = "mandarin"
+            fallback["variant_confidence"] = fallback.get("language_probability")
         return fallback
     try:
-        async with request.app["http"].post(WU_URL, json={"path": str(path), "fallback": fallback}) as response:
+        async with request.app["http"].post(
+            WU_URL,
+            json={"path": str(path), "fallback": fallback, "preference": preference},
+        ) as response:
             if response.status != 200:
                 raise ValueError(f"Wu STT returned HTTP {response.status}")
             result = await response.json()
@@ -104,6 +113,9 @@ async def maybe_use_wu(request: web.Request, path: Path, preference: str, fallba
             return result
     except Exception:
         LOGGER.warning("Wu STT unavailable; retaining Faster-Whisper result", exc_info=True)
+        language = str(fallback.get("language") or "").lower()
+        fallback["spoken_variant"] = "english" if language == "en" else "mandarin"
+        fallback["variant_confidence"] = fallback.get("language_probability")
         return fallback
 
 

@@ -114,7 +114,7 @@ model Persona {
   // reliable automatic Wu-vs-Mandarin classifier in the pipeline, so this
   // explicit owner preference keeps routing deterministic. See
   // back_end/services/livetalking.ts transcribeVoiceClip.
-  sttDialectPreference String @default("mandarin")
+  sttDialectPreference String @default("auto")
   // Real per-persona training state on the standalone LiveTalking/CosyVoice
   // GPU services (back_end/services/livetalking.ts). liveAvatarId is the
   // MuseTalk avatar_id once training succeeds — null until then, so the

@@ -15,6 +15,7 @@ import type {
 } from "@/back_end/api/personas/[id]/messages/route";
 import type { TranscribeResponseBody } from "@/back_end/api/personas/[id]/transcribe/route";
 import type { PersonaInitiativeResponseBody } from "@/back_end/api/personas/[id]/initiative/route";
+import type { SpokenLanguageVariant } from "@/shared/stt-language";
 
 type PersonaConversationViewProps = {
   personaId: string;
@@ -71,6 +72,16 @@ function speechBandRatio(analyser: AnalyserNode, buffer: Uint8Array<ArrayBuffer>
   return allEnergy > 0 ? speechEnergy / allEnergy : 0;
 }
 
+function spokenVariantLabel(variant: SpokenLanguageVariant, locale: "en" | "zh"): string {
+  const labels: Record<SpokenLanguageVariant, { en: string; zh: string }> = {
+    english: { en: "English", zh: "英语" },
+    mandarin: { en: "Mandarin", zh: "普通话" },
+    wu: { en: "Wu", zh: "吴语" },
+    shanghainese: { en: "Shanghainese", zh: "上海话" },
+  };
+  return labels[variant][locale];
+}
+
 export function PersonaConversationView({
   personaId,
   personaName,
@@ -89,6 +100,7 @@ export function PersonaConversationView({
   const [sending, setSending] = useState(false);
   const [messageError, setMessageError] = useState<string | null>(null);
   const [micStatus, setMicStatus] = useState<MicStatus>("off");
+  const [detectedSpokenVariant, setDetectedSpokenVariant] = useState<SpokenLanguageVariant | null>(null);
   const [liveVideoEnabled, setLiveVideoEnabled] = useState(videoReady);
   const [chatPosition, setChatPosition] = useState<{ x: number; y: number } | null>(null);
   const [chatMinimized, setChatMinimized] = useState(false);
@@ -180,7 +192,10 @@ export function PersonaConversationView({
     };
   }, [loading, personaId, locale, liveSessionId, videoMode]);
 
-  async function sendMessage(content: string): Promise<SendMessageResult> {
+  async function sendMessage(
+    content: string,
+    spokenVariant?: SpokenLanguageVariant,
+  ): Promise<SendMessageResult> {
     const trimmedContent = content.trim();
     if (!trimmedContent) return { ok: false, error: "Message can't be empty." };
     setSending(true);
@@ -194,6 +209,7 @@ export function PersonaConversationView({
           // without a second round trip through the browser.
           ...(videoMode && liveSessionId ? { liveSessionId } : {}),
           locale,
+          ...(spokenVariant ? { spokenVariant } : {}),
         }),
       });
       const result = (await response.json().catch(() => null)) as SendMessageResponseBody | null;
@@ -241,7 +257,13 @@ export function PersonaConversationView({
       setMicStatus((current) => (current === "off" ? current : "transcribing"));
       setMessageError(null);
       try {
-        const extension = mimeType.includes("mp4") ? "m4a" : mimeType.includes("ogg") ? "ogg" : "webm";
+        const extension = mimeType.includes("wav")
+          ? "wav"
+          : mimeType.includes("mp4")
+            ? "m4a"
+            : mimeType.includes("ogg")
+              ? "ogg"
+              : "webm";
         let result: TranscribeResponseBody | null = null;
         // A short retry handles an occasionally interrupted tunnel/Worker
         // request without re-recording the user's speech. Rebuild FormData on
@@ -262,11 +284,12 @@ export function PersonaConversationView({
             throw new Error(candidate && !candidate.ok ? candidate.error : "Couldn't transcribe that speech. Please try again.");
           }
         }
-        const transcript = result?.ok ? result.text.trim() : "";
-        if (!transcript) {
+        if (!result?.ok || !result.text.trim()) {
           throw new Error("Couldn't transcribe that speech. Please try again.");
         }
-        const sent = await sendMessage(transcript);
+        const transcript = result.text.trim();
+        setDetectedSpokenVariant(result.spokenVariant);
+        const sent = await sendMessage(transcript, result.spokenVariant);
         if (!sent.ok) {
           throw new Error(sent.error);
         }
@@ -323,6 +346,34 @@ export function PersonaConversationView({
     analyserRef.current = null;
     speakingRef.current = false;
     setMicStatus("off");
+  }
+
+  async function startDemoVoiceSample() {
+    // Repeatable production-demo harness. It is deliberately unreachable in
+    // normal navigation: only an explicit ?demoVoiceSample=shanghai URL uses
+    // the bundled fictional sample. The audio still traverses the real STT,
+    // spoken-variety routing, message, TTS and LiveTalking paths; this merely
+    // replaces physical microphone capture so an automated screen recording
+    // is deterministic and never touches the operator's actual microphone.
+    const generation = listeningGenerationRef.current + 1;
+    listeningGenerationRef.current = generation;
+    setDetectedSpokenVariant(null);
+    setMessageError(null);
+    setMicStatus("speaking");
+    try {
+      const response = await fetch("/demo/shen-shanghai.wav");
+      if (!response.ok) throw new Error("Demo voice sample is unavailable.");
+      const blob = await response.blob();
+      // Match the visible Hearing-you state to the eight-second source clip;
+      // the final film places that exact consented fictional audio here.
+      window.setTimeout(() => {
+        if (generation !== listeningGenerationRef.current) return;
+        enqueueTranscription(blob, "audio/wav", generation);
+      }, 8_050);
+    } catch (error) {
+      setMicStatus("off");
+      setMessageError(error instanceof Error ? error.message : "Demo voice sample is unavailable.");
+    }
   }
 
   async function startListening() {
@@ -395,7 +446,9 @@ export function PersonaConversationView({
 
   function toggleVoiceInput() {
     if (micStatus === "off") {
-      void startListening();
+      const demoVoiceSample = new URLSearchParams(window.location.search).get("demoVoiceSample");
+      if (demoVoiceSample === "shanghai") void startDemoVoiceSample();
+      else void startListening();
     } else {
       stopListening();
     }
@@ -576,6 +629,9 @@ export function PersonaConversationView({
               : micStatus === "transcribing"
                 ? "Transcribing…"
                 : "Listening — pause when you're done talking."}
+            {detectedSpokenVariant && micStatus === "listening"
+              ? ` · ${locale === "zh" ? "已识别" : "Detected"}: ${spokenVariantLabel(detectedSpokenVariant, locale)}`
+              : ""}
           </p>
         )}
         {messageError && (

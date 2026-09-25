@@ -18,6 +18,7 @@ from .tasks import AVATAR_ID_RE, AvatarTaskStore
 
 LOGGER = logging.getLogger("echo-livetalking-gateway")
 PERSONA_ID_RE = re.compile(r"^[A-Za-z0-9_-]{1,160}$")
+QUICK_TUNNEL_ORIGIN_RE = re.compile(r"^https://[a-z0-9-]+\.trycloudflare\.com$")
 
 
 def json_ok(data: dict | None = None, *, status: int = 200) -> web.Response:
@@ -59,7 +60,14 @@ async def health(request: web.Request) -> web.Response:
             upstream_ok = response.status == 200
     except Exception:
         pass
-    return web.json_response({"ok": True, "service": "echo-livetalking-gateway", "upstream": upstream_ok})
+    payload = {"ok": True, "service": "echo-livetalking-gateway", "upstream": upstream_ok}
+    try:
+        demo_origin = request.app["demo_origin_file"].read_text(encoding="utf-8").strip()
+        if QUICK_TUNNEL_ORIGIN_RE.fullmatch(demo_origin):
+            payload["demoOrigin"] = demo_origin
+    except OSError:
+        pass
+    return web.json_response(payload)
 
 
 async def proxy(request: web.Request) -> web.StreamResponse:
@@ -197,6 +205,50 @@ async def save_voice_reference(request: web.Request) -> web.Response:
         upload.unlink(missing_ok=True)
 
 
+async def speak_voice_reference(request: web.Request) -> web.Response:
+    """Drive the authenticated persona with its saved reference WAV.
+
+    This is intentionally server-side: the browser never receives a path to
+    the GPU filesystem, while LiveTalking still performs the real WebRTC
+    audio-driven mouth animation through its existing ``/humanaudio`` route.
+    """
+    identity: SessionIdentity = request["identity"]
+    persona_id = identity.persona_id
+    if not PERSONA_ID_RE.fullmatch(persona_id):
+        return json_error("invalid persona id", status=400)
+
+    payload = await request.json()
+    session_id = str(payload.get("sessionid") or "").strip()
+    if not session_id or len(session_id) > 160:
+        return json_error("a valid live-session id is required", status=400)
+
+    voice_root = (request.app["service_root"] / "data" / "voice_refs").resolve()
+    voice_ref = (voice_root / f"{persona_id}.wav").resolve()
+    if voice_ref.parent != voice_root:
+        return json_error("invalid voice-reference path", status=400)
+    if not voice_ref.is_file():
+        return json_error("voice reference is missing", status=404)
+
+    form = FormData()
+    audio_file = voice_ref.open("rb")
+    form.add_field("sessionid", session_id)
+    form.add_field("file", audio_file, filename=voice_ref.name, content_type="audio/wav")
+    try:
+        async with request.app["http"].post(
+            f'{request.app["upstream_url"]}/humanaudio',
+            data=form,
+        ) as response:
+            response_body = await response.read()
+            content_type = response.headers.get("Content-Type", "application/json")
+            return web.Response(
+                body=response_body,
+                status=response.status,
+                headers={"Content-Type": content_type},
+            )
+    finally:
+        audio_file.close()
+
+
 async def transcribe_voice(request: web.Request) -> web.Response:
     reader = await request.multipart()
     audio_path: Path | None = None
@@ -218,7 +270,15 @@ async def transcribe_voice(request: web.Request) -> web.Response:
         if audio_path is None:
             return json_error("audio is required")
         payload = await _transcribe_path(request, audio_path, dialect)
-        return json_ok({"text": str(payload.get("text") or "").strip(), "engine": payload.get("engine")})
+        spoken_variant = str(payload.get("spoken_variant") or "").strip().lower()
+        if spoken_variant not in {"english", "mandarin", "wu", "shanghainese"}:
+            spoken_variant = "english" if str(payload.get("language") or "").lower() == "en" else "mandarin"
+        return json_ok({
+            "text": str(payload.get("text") or "").strip(),
+            "engine": payload.get("engine"),
+            "spoken_variant": spoken_variant,
+            "variant_confidence": payload.get("variant_confidence"),
+        })
     except (OSError, ValueError, asyncio.TimeoutError) as error:
         return json_error(str(error), status=422)
     finally:
@@ -263,6 +323,9 @@ def create_app() -> web.Application:
         "upstream_url": os.environ.get("LIVETALKING_UPSTREAM_URL", "http://127.0.0.1:8011").rstrip("/"),
         "stt_url": os.environ.get("ECHO_STT_URL", "http://127.0.0.1:9891").rstrip("/"),
         "memory_url": os.environ.get("AGENTIC_MEMORY_URL", "http://127.0.0.1:9010").rstrip("/"),
+        "demo_origin_file": Path(
+            os.environ.get("ECHO_DEMO_ORIGIN_FILE", "/home/user/echo/runtime/demo-proxy-origin.url")
+        ).resolve(),
     })
     app["task_store"] = AvatarTaskStore(jobs_dir, service_root, python_executable)
     app.on_startup.append(startup)
@@ -277,6 +340,7 @@ def create_app() -> web.Application:
     app.router.add_post("/api/avatar/persona/{persona_id}/status", avatar_readiness)
     app.router.add_delete("/api/avatar/persona/{persona_id}", delete_persona)
     app.router.add_post("/api/voice/reference-from-url", save_voice_reference)
+    app.router.add_post("/api/voice/speak-reference", speak_voice_reference)
     app.router.add_post("/api/voice/transcribe", transcribe_voice)
     app.router.add_route("*", "/api/rag/{tail:.*}", rag_proxy)
     return app

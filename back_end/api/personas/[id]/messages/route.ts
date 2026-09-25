@@ -7,8 +7,13 @@ import { incrementPlatformMetrics } from "@/back_end/services/metrics";
 import { ingestConversationMessage } from "@/back_end/services/persona-rag";
 import { maskInappropriateLanguage } from "@/back_end/services/moderation";
 import { isLiveTalkingConfigured } from "@/back_end/services/live-avatar";
-import { dispatchLiveSpeech } from "@/back_end/services/speech";
+import {
+  dispatchLiveReferenceAudio,
+  dispatchLiveSpeech,
+  usesDemoReferenceAudio,
+} from "@/back_end/services/speech";
 import { hasPaidAccess } from "@/back_end/services/limits";
+import { isSpokenLanguageVariant } from "@/shared/stt-language";
 
 export type ChatMessageDTO = {
   id: string;
@@ -94,6 +99,9 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
     ? body.liveSessionId.trim()
     : "";
   const requestedLocale = body?.locale === "zh" ? "zh" : "en";
+  const spokenVariant = isSpokenLanguageVariant(body?.spokenVariant)
+    ? body.spokenVariant
+    : undefined;
 
   if (!content) {
     return NextResponse.json<SendMessageResponseBody>(
@@ -134,33 +142,48 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       if (message.role === "persona") recentMessages.push({ role: "persona", content: message.content });
     }
 
-    const replyResult = await getPersonaReply({
-      personaId,
-      personaName: persona.name,
-      message: content,
-      locale: requestedLocale,
-      recentMessages,
-      voiceReferenceTranscript: persona.voiceRefTranscript,
-    });
-    if (!replyResult.ok) {
-      // A provider outage is not something the persona said. Remove the
-      // provisional user row so retrying does not duplicate an unanswered
-      // turn, and surface a real service error instead of permanently saving
-      // and speaking a canned failure sentence in the persona's voice.
-      await db.chatMessage.delete({ where: { id: userMessage.id } }).catch((cleanupError) => {
-        console.error("Couldn't remove unanswered chat turn", cleanupError);
+    // A deployment may opt selected fictional demo personas into a stable,
+    // source-grounded showcase reply. The visible bubble uses the exact
+    // transcript of the audio that the GPU will play, preventing a Mandarin
+    // TTS fallback from being presented as Wu dialect and keeping speech and
+    // text synchronized. No production persona changes unless the explicit
+    // environment allow-list contains its id.
+    const useReferenceAudio = usesDemoReferenceAudio(personaId)
+      && Boolean(persona.voiceRefTranscript)
+      && !spokenVariant;
+    let replyContent: string;
+    if (useReferenceAudio) {
+      replyContent = maskInappropriateLanguage(persona.voiceRefTranscript!);
+    } else {
+      const replyResult = await getPersonaReply({
+        personaId,
+        personaName: persona.name,
+        message: content,
+        locale: requestedLocale,
+        recentMessages,
+        voiceReferenceTranscript: persona.voiceRefTranscript,
+        responseLanguage: spokenVariant,
       });
-      return NextResponse.json<SendMessageResponseBody>(
-        {
-          ok: false,
-          error: requestedLocale === "zh"
-            ? "回复服务暂时不可用，请稍后重试。"
-            : "The reply service is temporarily unavailable. Please try again.",
-        },
-        { status: 503 },
-      );
+      if (!replyResult.ok) {
+        // A provider outage is not something the persona said. Remove the
+        // provisional user row so retrying does not duplicate an unanswered
+        // turn, and surface a real service error instead of permanently saving
+        // and speaking a canned failure sentence in the persona's voice.
+        await db.chatMessage.delete({ where: { id: userMessage.id } }).catch((cleanupError) => {
+          console.error("Couldn't remove unanswered chat turn", cleanupError);
+        });
+        return NextResponse.json<SendMessageResponseBody>(
+          {
+            ok: false,
+            error: requestedLocale === "zh"
+              ? "回复服务暂时不可用，请稍后重试。"
+              : "The reply service is temporarily unavailable. Please try again.",
+          },
+          { status: 503 },
+        );
+      }
+      replyContent = maskInappropriateLanguage(replyResult.text);
     }
-    const replyContent = maskInappropriateLanguage(replyResult.text);
 
     const replyMessage = await db.chatMessage.create({
       data: { personaId, role: "persona", content: replyContent },
@@ -212,13 +235,21 @@ export async function POST(request: NextRequest, { params }: { params: Promise<{
       hasPaidAccess(user.subscriptionStatus, user.subscriptionRenewsAt)
     ) {
       try {
-        await dispatchLiveSpeech({
-          userId: user.id,
-          personaId,
-          sessionId: liveSessionId,
-          utteranceId: replyMessage.id,
-          text: replyContent,
-        });
+        if (useReferenceAudio) {
+          await dispatchLiveReferenceAudio({
+            userId: user.id,
+            personaId,
+            sessionId: liveSessionId,
+          });
+        } else {
+          await dispatchLiveSpeech({
+            userId: user.id,
+            personaId,
+            sessionId: liveSessionId,
+            utteranceId: replyMessage.id,
+            text: replyContent,
+          });
+        }
         liveSpeechQueued = true;
       } catch (liveError) {
         // Text chat remains successful if the optional live service is

@@ -1,0 +1,12 @@
+[Unit]
+Description=Periodically synchronize the ECHO Quick Tunnel URL
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=5min
+RandomizedDelaySec=15s
+Persistent=true
+Unit=echo-demo-origin-sync.service
+
+[Install]
+WantedBy=timers.target

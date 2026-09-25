@@ -1,4 +1,8 @@
-import type { SttLanguagePreference } from "@/shared/stt-language";
+import {
+  isSpokenLanguageVariant,
+  type SpokenLanguageVariant,
+  type SttLanguagePreference,
+} from "@/shared/stt-language";
 
 // Bridges this app's backend to the standalone LiveTalking WebRTC avatar
 // server running on a separate GPU box. The browser talks to that server
@@ -125,6 +129,49 @@ export async function dispatchLiveSpeech({
     signal: AbortSignal.timeout(2_500),
   });
   if (!response.ok) throw new Error(`Avatar server returned ${response.status}.`);
+}
+
+/**
+ * Plays this authenticated persona's saved reference WAV through the same
+ * LiveTalking WebRTC session used by ordinary text-driven speech.
+ *
+ * The GPU gateway resolves the file from the token's persona id, so callers
+ * cannot choose another persona's audio or expose a GPU filesystem path.
+ */
+export async function dispatchLiveReferenceAudio({
+  userId,
+  personaId,
+  sessionId,
+}: {
+  userId: string;
+  personaId: string;
+  sessionId: string;
+}): Promise<void> {
+  const serverUrl = liveTalkingServerUrl();
+  const token = await createLiveSessionToken(userId, personaId);
+  if (!serverUrl || !token) throw new Error("The live avatar server isn't configured yet.");
+
+  const response = await fetch(`${serverUrl}/api/voice/speak-reference`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
+    body: JSON.stringify({ sessionid: sessionId }),
+    signal: AbortSignal.timeout(4_000),
+  });
+  if (!response.ok) throw new Error(`Avatar reference-audio server returned ${response.status}.`);
+}
+
+/**
+ * Temporary, deployment-scoped showcase mode. Production behavior is
+ * unchanged unless an operator explicitly lists persona ids in the env var.
+ */
+export function usesDemoReferenceAudio(personaId: string): boolean {
+  const configured = process.env.ECHO_DEMO_REFERENCE_AUDIO_PERSONAS;
+  if (!configured) return false;
+  return configured
+    .split(",")
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .includes(personaId);
 }
 
 /**
@@ -506,8 +553,12 @@ export async function checkFaceMatch(
 export async function transcribeVoiceClip(
   personaId: string,
   audioBlob: File,
-  dialectPreference: SttLanguagePreference = "mandarin",
-): Promise<string | null> {
+  dialectPreference: SttLanguagePreference = "auto",
+): Promise<{
+  text: string;
+  spokenVariant: SpokenLanguageVariant;
+  variantConfidence: number | null;
+} | null> {
   const serverUrl = liveTalkingServerUrl();
   const token = await systemToken(personaId);
   if (!serverUrl || !token) return null;
@@ -523,9 +574,23 @@ export async function transcribeVoiceClip(
       body: form,
       signal: AbortSignal.timeout(15_000),
     });
-    const body = (await response.json()) as { code: number; data?: { text: string } };
+    const body = (await response.json()) as {
+      code: number;
+      data?: {
+        text: string;
+        spoken_variant?: unknown;
+        variant_confidence?: unknown;
+      };
+    };
     if (!response.ok || body.code !== 0 || !body.data) return null;
-    return body.data.text;
+    const spokenVariant = isSpokenLanguageVariant(body.data.spoken_variant)
+      ? body.data.spoken_variant
+      : "mandarin";
+    const variantConfidence = typeof body.data.variant_confidence === "number"
+      && Number.isFinite(body.data.variant_confidence)
+      ? Math.max(0, Math.min(1, body.data.variant_confidence))
+      : null;
+    return { text: body.data.text, spokenVariant, variantConfidence };
   } catch {
     return null;
   }

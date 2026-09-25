@@ -7,8 +7,10 @@
  * implementation is CosyVoice, FastWhisper, or an approved fallback.
  */
 export {
+  dispatchLiveReferenceAudio,
   dispatchLiveSpeech,
   saveVoiceReference,
   transcribeVoiceClip,
+  usesDemoReferenceAudio,
   voiceRefPath,
 } from "@/back_end/services/livetalking";

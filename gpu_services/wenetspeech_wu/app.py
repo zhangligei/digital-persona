@@ -185,13 +185,21 @@ def _transcribe_and_select(payload: dict[str, object]) -> dict[str, object]:
         if fallback_payload.get("language_probability") is not None
         else None,
     )
-    selected = choose_transcript(fallback, str(wu_result["text"]), float(wu_result["confidence"]))
+    preference = str(payload.get("preference") or "wu").strip().lower()
+    selected = choose_transcript(
+        fallback,
+        str(wu_result["text"]),
+        float(wu_result["confidence"]),
+        preference=preference,
+    )
     return {
         "text": selected.text,
         "engine": selected.engine,
         "language": selected.language,
         "language_probability": selected.language_probability,
         "confidence": selected.confidence,
+        "spoken_variant": selected.spoken_variant,
+        "variant_confidence": selected.variant_confidence,
         "wu": wu_result,
     }
 

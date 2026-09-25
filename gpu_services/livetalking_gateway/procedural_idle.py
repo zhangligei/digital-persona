@@ -10,6 +10,8 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Sequence
 
+from .avatar_runtime import apply_synthetic_blink
+
 
 @dataclass(frozen=True)
 class MotionSample:
@@ -295,6 +297,14 @@ def generate_procedural_idle(
         image_paths,
         coordinates,
     )
+    blink_mode = "natural"
+    if blink_target is None:
+        # Some guided scans contain no usable closed-eye source frame. The old
+        # fallback silently produced an avatar that never blinked at all. Keep
+        # the natural-source path when available, but synthesize an eye-only
+        # target from the selected neutral frame as a deterministic last resort.
+        blink_target = apply_synthetic_blink(base, box, 1.0)
+        blink_mode = "synthetic"
     height, width = base.shape[:2]
     frame_count = max(1, round(seconds * fps))
     curve = motion_samples(frame_count, fps, avatar_id)
@@ -320,12 +330,13 @@ def generate_procedural_idle(
             raise OSError(f"could not write {destination}")
 
     metadata = {
-        "version": 2,
-        "generator": "bounded-ou-breath-varied-natural-blink",
+        "version": 3,
+        "generator": "bounded-ou-breath-varied-blink-fallback",
         "frames": frame_count,
         "fps": fps,
         "source_frame_index": source_index,
         "natural_blink_source_index": blink_source_index,
+        "blink_mode": blink_mode,
         "source_dimensions": [width, height],
         "motion_bounds": {
             "translate_x": 2.8,

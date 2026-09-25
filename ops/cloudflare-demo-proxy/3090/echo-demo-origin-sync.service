@@ -1,0 +1,10 @@
+[Unit]
+Description=Publish the ECHO Quick Tunnel URL for stable Worker discovery
+After=network-online.target echo-demo-tunnel.service
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/home/user/echo/app/scripts/gpu-server/sync-demo-proxy-origin.sh
+TimeoutStartSec=90
+UMask=0077

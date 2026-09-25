@@ -1,0 +1,30 @@
+{
+  "$schema": "../../node_modules/wrangler/config-schema.json",
+  "name": "echo-digital-persona-demo",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-30",
+  "compatibility_flags": ["nodejs_compat"],
+  "workers_dev": true,
+  "preview_urls": true,
+  "vars": {
+    "ORIGIN_BASE_URL": "https://turtle-while-intellectual-dance.trycloudflare.com",
+    "ORIGIN_DISCOVERY_URL": "https://livetalking.echodigitalpersona.com/health"
+  },
+  "kv_namespaces": [
+    {
+      "binding": "ORIGIN_CONFIG",
+      "id": "a60cf7cb27e4478584b618eb0c871f33"
+    }
+  ],
+  "observability": {
+    "enabled": true,
+    "logs": {
+      "enabled": true,
+      "invocation_logs": true,
+      "head_sampling_rate": 1
+    }
+  },
+  "triggers": {
+    "crons": ["* * * * *"]
+  }
+}
