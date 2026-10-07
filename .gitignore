@@ -52,6 +52,9 @@ __pycache__/
 # release commits unless it is deliberately moved into docs/.
 /output/
 
+# Locally recorded demo videos and frame previews.
+/demo-output/
+
 # Separate research material — never part of the ECHO application, deployment,
 # or source repository.
 ai_resurrection_hir_reference.md

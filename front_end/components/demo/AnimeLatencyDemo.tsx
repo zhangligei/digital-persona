@@ -4,6 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import Image from "next/image";
 
 type DemoMode = "cloud" | "local-fallback" | null;
+type TtsMode = "cloud-stream" | "local-fallback" | null;
 
 type Timing = {
   reply?: number;
@@ -40,6 +41,7 @@ export default function AnimeLatencyDemo() {
   const [transcript, setTranscript] = useState("");
   const [reply, setReply] = useState("");
   const [mode, setMode] = useState<DemoMode>(null);
+  const [ttsMode, setTtsMode] = useState<TtsMode>(null);
   const [timing, setTiming] = useState<Timing>({});
   const [busy, setBusy] = useState(false);
   const [listening, setListening] = useState(false);
@@ -47,13 +49,32 @@ export default function AnimeLatencyDemo() {
   const [notice, setNotice] = useState("点击示例，马上开始一次低延迟对话");
   const recognitionRef = useRef<SpeechRecognitionLike | null>(null);
   const speechStartedAtRef = useRef<number | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
+  const audioObjectUrlRef = useRef<string | null>(null);
 
   useEffect(() => () => {
     recognitionRef.current?.stop();
     window.speechSynthesis?.cancel();
+    audioRef.current?.pause();
+    if (audioObjectUrlRef.current) URL.revokeObjectURL(audioObjectUrlRef.current);
   }, []);
 
-  const speak = useCallback((text: string, startedAt: number) => {
+  const finishSpeech = useCallback((startedAt: number) => {
+    setSpeaking(false);
+    setTiming((current) => ({ ...current, finished: elapsed(startedAt) }));
+  }, []);
+
+  const markSpeechStart = useCallback((startedAt: number) => {
+    if (speechStartedAtRef.current !== startedAt) speechStartedAtRef.current = startedAt;
+    setSpeaking(true);
+    setTiming((current) => ({
+      ...current,
+      firstAudio: current.firstAudio ?? elapsed(startedAt),
+      firstFrame: current.firstFrame ?? elapsed(startedAt) + 16,
+    }));
+  }, []);
+
+  const speakLocally = useCallback((text: string, startedAt: number) => {
     const markSpeechStart = () => {
       if (speechStartedAtRef.current !== startedAt) speechStartedAtRef.current = startedAt;
       setSpeaking(true);
@@ -98,6 +119,101 @@ export default function AnimeLatencyDemo() {
     }, 180);
   }, []);
 
+  const speak = useCallback(async (text: string, startedAt: number) => {
+    window.speechSynthesis?.cancel();
+    audioRef.current?.pause();
+    if (audioObjectUrlRef.current) {
+      URL.revokeObjectURL(audioObjectUrlRef.current);
+      audioObjectUrlRef.current = null;
+    }
+
+    try {
+      const response = await fetch("/api/demo/tts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text }),
+      });
+      if (!response.ok || !response.body) throw new Error("cloud tts unavailable");
+
+      setTtsMode("cloud-stream");
+      const audio = new Audio();
+      audio.preload = "auto";
+      audioRef.current = audio;
+      audio.onended = () => finishSpeech(startedAt);
+      audio.onerror = () => finishSpeech(startedAt);
+
+      // MediaSource lets the browser begin playback while the server is
+      // still sending MP3 chunks. A blob fallback keeps the demo usable on
+      // browsers that do not expose audio/mpeg MediaSource support.
+      const canStream = typeof window.MediaSource !== "undefined"
+        && MediaSource.isTypeSupported("audio/mpeg");
+      if (!canStream) {
+        const blob = await response.blob();
+        const url = URL.createObjectURL(blob);
+        audioObjectUrlRef.current = url;
+        audio.src = url;
+        audio.onplaying = () => markSpeechStart(startedAt);
+        await audio.play();
+        return;
+      }
+
+      const mediaSource = new MediaSource();
+      const mediaUrl = URL.createObjectURL(mediaSource);
+      audioObjectUrlRef.current = mediaUrl;
+      audio.src = mediaUrl;
+      let sourceBuffer: SourceBuffer | null = null;
+      const queue: ArrayBuffer[] = [];
+      let streamDone = false;
+      let playbackStarted = false;
+      const startPlayback = () => {
+        if (playbackStarted) return;
+        playbackStarted = true;
+        void audio.play().then(() => markSpeechStart(startedAt)).catch(() => {
+          playbackStarted = false;
+        });
+      };
+      const drain = () => {
+        if (!sourceBuffer || sourceBuffer.updating) return;
+        const next = queue.shift();
+        if (next) {
+          sourceBuffer.appendBuffer(next);
+          if (!playbackStarted) startPlayback();
+        } else if (streamDone && mediaSource.readyState === "open") {
+          mediaSource.endOfStream();
+        }
+      };
+      await new Promise<void>((resolve, reject) => {
+        const onOpen = () => {
+          try {
+            sourceBuffer = mediaSource.addSourceBuffer("audio/mpeg");
+            sourceBuffer.addEventListener("updateend", drain);
+            resolve();
+          } catch (error) {
+            reject(error);
+          }
+        };
+        mediaSource.addEventListener("sourceopen", onOpen, { once: true });
+        mediaSource.addEventListener("error", () => reject(new Error("media source failed")), { once: true });
+      });
+
+      const reader = response.body.getReader();
+      while (true) {
+        const chunk = await reader.read();
+        if (chunk.done) break;
+        if (chunk.value?.byteLength) {
+          queue.push(chunk.value.buffer.slice(chunk.value.byteOffset, chunk.value.byteOffset + chunk.value.byteLength));
+          drain();
+        }
+      }
+      streamDone = true;
+      drain();
+    } catch {
+      setTtsMode("local-fallback");
+      setNotice("云端 TTS 暂不可用，已切换浏览器语音；口型和延迟动画仍可继续演示");
+      speakLocally(text, startedAt);
+    }
+  }, [finishSpeech, markSpeechStart, speakLocally]);
+
   const submit = useCallback(async (value: string) => {
     const normalized = value.trim();
     if (!normalized || busy) return;
@@ -106,6 +222,7 @@ export default function AnimeLatencyDemo() {
     setTranscript(normalized);
     setReply("");
     setMode(null);
+    setTtsMode(null);
     setTiming({});
     setNotice("云端单模型正在返回文字，数字人会在首段语音到达时开口");
     try {
@@ -119,8 +236,8 @@ export default function AnimeLatencyDemo() {
       setReply(result.reply);
       setMode(result.mode ?? "local-fallback");
       setTiming({ reply: elapsed(startedAt) });
-      setNotice(result.mode === "cloud" ? "云端模型已返回，正在播放语音并驱动口型" : "当前使用本地兜底回复，仍可观察动画和端到端计时");
-      speak(result.reply, startedAt);
+      setNotice(result.mode === "cloud" ? "云端模型已返回，正在请求流式 TTS 并驱动口型" : "当前使用本地兜底回复，正在请求云端 TTS");
+      void speak(result.reply, startedAt);
     } catch {
       setNotice("Demo 服务暂时不可用，请重新点击一次");
     } finally {
@@ -189,7 +306,7 @@ export default function AnimeLatencyDemo() {
             <div className="anime-status-card relative z-10 mx-auto mt-6 w-full max-w-[28rem]">
               <div className="flex items-center justify-between text-xs text-white/50">
                 <span>{speaking ? "正在说话" : "等待输入"}</span>
-                <span>{mode === "cloud" ? "单模型云端" : mode === "local-fallback" ? "本地兜底" : "准备就绪"}</span>
+                <span>{ttsMode === "cloud-stream" ? "云端流式 TTS" : ttsMode === "local-fallback" ? "浏览器兜底语音" : mode === "cloud" ? "云端文字模型" : "准备就绪"}</span>
               </div>
               <div className="mt-3 h-1.5 overflow-hidden rounded-full bg-white/10">
                 <div className={`anime-progress ${speaking ? "is-active" : ""}`} />
@@ -241,7 +358,7 @@ export default function AnimeLatencyDemo() {
                 {!transcript && <p className="text-white/35">{notice}</p>}
               </div>
             </div>
-            <p className="mt-4 text-xs leading-5 text-white/40">{notice} 这个页面优先展示响应速度；接入真实云端 TTS 时，口型动画可以继续复用。</p>
+            <p className="mt-4 text-xs leading-5 text-white/40">{notice} 首段语音指标现在来自云端音频播放；云端不可用时会明确标记浏览器兜底。</p>
           </div>
         </section>
       </div>
