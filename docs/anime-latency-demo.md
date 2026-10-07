@@ -29,7 +29,9 @@ routes. It answers the first experiment question — how quickly a simple anime
 character can respond — before adding RAG, multi-agent orchestration, voice
 cloning or full video rendering.
 
-The mouth overlay is placed over the mouth already present in the source
-illustration. It stays transparent while idle, which avoids the old “two
-mouths” artifact, and only opens at the same coordinates while audio is
-playing.
+While the avatar is speaking, a skin-coloured cover masks the baked-in mouth
+from the source illustration before the animated mouth layer appears. This
+keeps one visible mouth instead of the old “two mouths” artifact. The input
+panel also includes a one-minute continuous speech button for recording a
+longer visual check; the resulting stage-only recording can be produced by
+cropping the left stage panel from the browser window.

@@ -21,8 +21,10 @@
 .anime-avatar-glow { position: absolute; top: 5.25rem; width: min(78%, 420px); aspect-ratio: 1; border-radius: 50%; background: radial-gradient(circle, rgba(116, 196, 255, .22), rgba(137, 92, 255, .08) 48%, transparent 70%); filter: blur(12px); }
 .anime-avatar-frame { position: relative; width: min(76%, 420px); }
 .anime-avatar-image { position: relative; z-index: 1; display: block; width: 100%; height: auto; filter: drop-shadow(0 22px 32px rgba(0, 0, 0, .32)); }
-.anime-mouth { position: absolute; z-index: 2; left: 50%; top: 53.7%; width: 13.4%; height: 4px; transform: translateX(-50%); border-radius: 50% 50% 45% 45%; background: rgba(92, 30, 50, .9); opacity: 0; box-shadow: inset 0 1px 1px rgba(255,255,255,.35); transition: height 90ms ease, width 90ms ease, border-radius 90ms ease, opacity 90ms ease; }
-.anime-avatar-wrap.is-speaking .anime-mouth { width: 13.8%; height: 16px; border-radius: 30% 30% 44% 44%; opacity: .82; animation: anime-mouth-talk 170ms ease-in-out infinite alternate; }
+.anime-mouth-cover { position: absolute; z-index: 2; left: 50%; top: 52.6%; width: 17%; height: 4.9%; transform: translateX(-50%); border-radius: 50%; background: linear-gradient(180deg, rgba(255, 226, 207, .98), rgba(255, 216, 193, .98)); filter: blur(1.2px); opacity: 0; transition: opacity 90ms ease; }
+.anime-mouth { position: absolute; z-index: 3; left: 50%; top: 53.7%; width: 13.4%; height: 4px; transform: translateX(-50%); border-radius: 50% 50% 45% 45%; background: rgba(92, 30, 50, .9); opacity: 0; box-shadow: inset 0 1px 1px rgba(255,255,255,.35); transition: height 90ms ease, width 90ms ease, border-radius 90ms ease, opacity 90ms ease; }
+.anime-avatar-wrap.is-speaking .anime-mouth-cover { opacity: 1; }
+.anime-avatar-wrap.is-speaking .anime-mouth { width: 13.8%; height: 16px; border-radius: 30% 30% 44% 44%; opacity: .9; animation: anime-mouth-talk 170ms ease-in-out infinite alternate; }
 .anime-avatar-wrap.is-speaking .anime-avatar-image { animation: anime-head-talk 480ms ease-in-out infinite alternate; }
 .anime-status-card { border: 1px solid rgba(255,255,255,.11); border-radius: 18px; background: rgba(5, 7, 20, .46); padding: 14px 16px; backdrop-filter: blur(10px); }
 .anime-progress { width: 24%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, #6ee7f9, #9b8cff); opacity: .45; }
@@ -32,6 +34,9 @@
 .anime-send-button { border-radius: 12px; background: linear-gradient(100deg, #62d5f5, #8b7dff); padding: 12px 16px; color: #07101f; font-size: 14px; font-weight: 650; transition: transform 140ms ease, filter 140ms ease; }
 .anime-send-button:hover { filter: brightness(1.08); transform: translateY(-1px); }
 .anime-send-button:disabled { cursor: wait; opacity: .58; transform: none; }
+.anime-long-demo-button { border: 1px solid rgba(164,224,255,.22); border-radius: 12px; padding: 10px 16px; color: rgba(205,243,255,.86); background: rgba(88,179,215,.08); font-size: 13px; transition: background 140ms ease, border-color 140ms ease; }
+.anime-long-demo-button:hover { border-color: rgba(164,224,255,.48); background: rgba(88,179,215,.14); }
+.anime-long-demo-button:disabled { cursor: wait; opacity: .58; }
 .anime-sample-chip { border: 1px solid rgba(255,255,255,.1); border-radius: 999px; padding: 7px 10px; color: rgba(255,255,255,.62); background: rgba(255,255,255,.035); font-size: 11px; text-align: left; }
 .anime-sample-chip:hover { border-color: rgba(164,224,255,.42); color: rgba(220,248,255,.95); }
 @keyframes anime-avatar-idle { 0%, 100% { transform: translateY(0) rotate(0deg); } 50% { transform: translateY(-7px) rotate(.35deg); } }
@@ -39,7 +44,7 @@
 @keyframes anime-mouth-talk { 0% { height: 7px; } 100% { height: 18px; } }
 @keyframes anime-progress { from { transform: translateX(-22%); } to { transform: translateX(120%); } }
 @keyframes anime-mic-pulse { 0%, 100% { box-shadow: 0 0 0 0 rgba(248,113,113,.15); } 50% { box-shadow: 0 0 0 7px rgba(248,113,113,.02); } }
-@media (prefers-reduced-motion: reduce) { .anime-avatar-wrap, .anime-avatar-image, .anime-mouth, .anime-progress, .anime-mic-button { animation: none !important; transition: none !important; } }
+@media (prefers-reduced-motion: reduce) { .anime-avatar-wrap, .anime-avatar-image, .anime-mouth, .anime-mouth-cover, .anime-progress, .anime-mic-button { animation: none !important; transition: none !important; } }
 
 /* Register the semantic colors so a data-theme change can interpolate the
  * inherited custom properties. Components already consume these variables

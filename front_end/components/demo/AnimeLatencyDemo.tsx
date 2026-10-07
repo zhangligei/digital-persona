@@ -32,6 +32,8 @@ const samples = [
   "今天天气怎么样，要不要出去走走？",
 ];
 
+const longDemoText = "你好，我是澄澄，接下来用一分钟陪你聊聊天。今天我们可以慢慢说，不需要赶时间。你可以跟我讲讲最近的生活，讲讲窗外的天气，讲讲以前和家人在一起的故事，也可以只是安静地听我说几句。陪伴不一定要一直有很多话，有时候知道有人在这里，就已经很安心了。如果你想起了孩子，我可以陪你把想说的话慢慢整理出来；如果今天心情有一点低落，也没有关系，我们先做一次深呼吸，再从最轻松的事情开始。你可以告诉我午饭吃了什么，最近有没有看到喜欢的电视节目，或者院子里的花有没有开。每一次聊天，我都会认真听你说。现在先不用考虑接下来要做什么，就在这里坐一会儿，听我把这段话说完。等我说完以后，你还可以继续输入新的问题，我们再接着聊。希望这一分钟能让你感觉到，这里一直有一个温和的声音，在耐心地陪着你。";
+
 function elapsed(startedAt: number): number {
   return Math.max(0, Math.round(performance.now() - startedAt));
 }
@@ -60,6 +62,7 @@ export default function AnimeLatencyDemo() {
   }, []);
 
   const finishSpeech = useCallback((startedAt: number) => {
+    setBusy(false);
     setSpeaking(false);
     setTiming((current) => ({ ...current, finished: elapsed(startedAt) }));
   }, []);
@@ -88,6 +91,7 @@ export default function AnimeLatencyDemo() {
     if (!window.speechSynthesis) {
       markSpeechStart();
       window.setTimeout(() => {
+        setBusy(false);
         setSpeaking(false);
         setTiming((current) => ({ ...current, finished: elapsed(startedAt) }));
       }, 1_200);
@@ -101,10 +105,12 @@ export default function AnimeLatencyDemo() {
     utterance.pitch = 1.02;
     utterance.onstart = markSpeechStart;
     utterance.onend = () => {
+      setBusy(false);
       setSpeaking(false);
       setTiming((current) => ({ ...current, finished: elapsed(startedAt) }));
     };
     utterance.onerror = () => {
+      setBusy(false);
       setSpeaking(false);
       setTiming((current) => ({ ...current, finished: elapsed(startedAt) }));
     };
@@ -245,6 +251,19 @@ export default function AnimeLatencyDemo() {
     }
   }, [busy, speak]);
 
+  const playLongDemo = useCallback(() => {
+    if (busy) return;
+    const startedAt = performance.now();
+    setBusy(true);
+    setTranscript("一分钟连续讲话演示");
+    setReply(longDemoText);
+    setMode("local-fallback");
+    setTtsMode(null);
+    setTiming({});
+    setNotice("正在播放一分钟连续讲话，观察动态口型是否始终覆盖静态嘴部");
+    void speak(longDemoText, startedAt);
+  }, [busy, speak]);
+
   const startListening = useCallback(() => {
     const browserWindow = window as Window & {
       SpeechRecognition?: SpeechRecognitionConstructor;
@@ -296,6 +315,7 @@ export default function AnimeLatencyDemo() {
               <div className="anime-avatar-glow" />
               <div className="anime-avatar-frame">
                 <Image src="/demo/anime-companion.png" alt="动漫陪伴角色" width={1199} height={1312} priority className="anime-avatar-image" />
+                <span className="anime-mouth-cover" aria-hidden="true" />
                 <span className="anime-mouth" aria-hidden="true" />
               </div>
             </div>
@@ -337,6 +357,14 @@ export default function AnimeLatencyDemo() {
                 <button type="button" onClick={startListening} className={`anime-mic-button ${listening ? "is-listening" : ""}`} aria-label="开始中文语音输入">{listening ? "●" : "⌕"}</button>
               </div>
               <button type="button" disabled={busy} onClick={() => void submit(input)} className="anime-send-button mt-3 w-full">{busy ? "正在响应…" : "发送并开始计时"}</button>
+              <button
+                type="button"
+                disabled={busy}
+                onClick={() => void playLongDemo()}
+                className="anime-long-demo-button mt-2 w-full"
+              >
+                播放一分钟连续口型演示
+              </button>
             </div>
 
             <div className="mt-4 flex flex-wrap gap-2">
