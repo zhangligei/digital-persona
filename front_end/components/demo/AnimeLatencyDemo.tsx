@@ -186,7 +186,7 @@ export default function AnimeLatencyDemo() {
               <p className="text-lg font-medium">澄澄</p>
               <p className="mt-1 text-sm text-white/55">2D 动画口型 · 不等待视频生成</p>
             </div>
-            <div className="anime-status-card relative z-10 mx-auto mt-6 max-w-md">
+            <div className="anime-status-card relative z-10 mx-auto mt-6 w-full max-w-[28rem]">
               <div className="flex items-center justify-between text-xs text-white/50">
                 <span>{speaking ? "正在说话" : "等待输入"}</span>
                 <span>{mode === "cloud" ? "单模型云端" : mode === "local-fallback" ? "本地兜底" : "准备就绪"}</span>
